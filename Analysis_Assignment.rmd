@@ -1,0 +1,334 @@
+---
+title: "Analysis_Assignment"
+author: "101401 - Asoka Niyonsaba Jean Claude"
+date: "2025-10-17"
+output: html_document
+---
+
+```{r}
+# ```{r setup, include=FALSE}
+# Turn off unnecessary warnings and messages during knitting
+# knitr::opts_chunk$set(message = FALSE, warning = FALSE)
+
+#install.packages("janitor")
+#install.packages("skimr")
+#install.packages("ggcorrplot")
+#install.packages("scales")
+
+
+# Load required libraries (only install once if not yet installed)
+# install.packages(c("tidyverse","janitor","skimr","ggplot2","ggcorrplot","scales"))
+library(tidyverse)
+library(janitor)
+library(skimr)
+library(ggplot2)
+library(ggcorrplot)
+library(scales)
+
+
+
+## 1) Load data for both dataset
+
+# Load World Population dataset and clean column names
+pop_raw <- readr::read_csv("data_house/world_population.csv") %>%
+  janitor::clean_names()
+# Load CO₂ Emission dataset and clean column names
+co2_raw <- readr::read_csv("data_house/co2_emissions.csv") %>%
+  janitor::clean_names()
+
+# Check dataset size (rows and columns)
+dim(pop_raw)     
+dim(co2_raw)
+
+
+# View first 10 column names to confirm structure
+names(pop_raw)[1:10]  
+names(co2_raw)[1:10] 
+
+
+## 4.2 Exploratory data analysis
+
+# Preview top 5 and bottom 10 rows 
+head(pop_raw, 5)
+tail(pop_raw, 10)
+
+#show data type and structure of the dataset
+glimpse(pop_raw)
+# Show dataset shape (rows × columns)
+dim(pop_raw) 
+
+# Check duplicates
+pop_raw %>% distinct() %>% nrow()
+
+#Count  missing values
+pop_raw %>% summarize(across(everything(),~ sum(is.na(.))))
+
+# Boxplot for numeric columns to detect outliers
+pop_numeric <- pop_raw %>%
+  select(where(is.numeric)) %>%
+  pivot_longer(everything())
+
+ ggplot(pop_numeric, aes(x = name, y = value)) +
+  geom_boxplot() +
+  coord_flip() +
+  labs(title = "Distribution and Outliers in Population Dataset", x = "Variables", y = "Value")
+ 
+ # Handle missing values (if any) in numeric columns
+pop_clean <- pop_raw %>%
+  mutate(across(where(is.numeric), ~ ifelse(is.na(.x), 0, .x)))
+
+# Confirm there are no missing values now
+pop_clean %>%
+  summarise(across(everything(), ~ sum(is.na(.x))))
+
+
+# Handle outliers: limit (winsorize) values to 1st–99th percentile range
+pop_clean <- pop_clean %>%
+  mutate(across(where(is.numeric), ~ {
+    q <- quantile(.x, probs = c(0.01, 0.99), na.rm = TRUE)
+    pmin(pmax(.x, q[1]), q[2])
+  }))
+
+# Recheck boxplot after handling outliers
+pop_num2 <- pop_clean %>%
+  select(where(is.numeric)) %>%
+  pivot_longer(everything())
+
+ggplot(pop_num2, aes(x = name, y = value)) +
+  geom_boxplot() +
+  coord_flip() +
+  labs(
+    title = "Boxplots After Handling Outliers",
+    x = "Variables",
+    y = "Values"
+  )
+
+
+
+# Time period between 2022 and 2030 (8 years)
+t_years <-8 # time period from 2022 to 2030
+
+# Convert growth_rate to numeric (remove % sign)
+pop_clean <- pop_clean %>%
+  mutate(
+    growth_rate = as.numeric(str_replace(growth_rate, "%", "")) / 100
+  )
+# Calculate projected population using formula Nt = P * exp(r * t)
+pop_clean <- pop_clean %>%
+  mutate(pop_2030 = x2022_population * exp(growth_rate * t_years))
+# Show first 10 projected results
+pop_clean %>%
+  select(country_territory, continent, x2022_population, growth_rate, pop_2030) %>%
+  head(10)
+
+
+
+# Identify top 10 countries by projected population in 2030
+top10_2030 <- pop_clean %>%
+  arrange(desc(pop_2030)) %>%
+  slice_head(n = 10)
+
+ggplot(top10_2030, aes(x = reorder(country_territory, pop_2030), y = pop_2030)) +
+  geom_col(fill = "steelblue") +
+  coord_flip() +
+  scale_y_continuous(labels = scales::label_number(scale_cut = cut_short_scale())) +
+  labs(
+    title = "Top 10 Projected Populations in 2030",
+    x = "Country",
+    y = "Projected Population (2030)"
+  )
+
+
+## 4.4 Value Extraction and Plot
+
+# Extract top 10 countries by 2022 population and store in a variable
+top10_2022 <- pop_raw %>%
+  arrange(desc(x2022_population)) %>%
+  slice_head(n = 10) %>%
+  select(country_territory, continent, x2022_population)
+
+# Display it
+top10_2022
+
+## 4.4.1  Top 10 Most Populous Countries (2022)
+
+ggplot(top10_2022,
+       aes(x = reorder(country_territory, x2022_population),
+           y = x2022_population,
+           fill = continent)) +
+  geom_col(width = 0.7) +
+  coord_flip() +
+  geom_text(aes(label = scales::label_number(scale_cut = cut_short_scale())(x2022_population)),
+            hjust = -0.1, size = 3) +
+  scale_y_continuous(labels = scales::label_number(scale_cut = cut_short_scale())) +
+  labs(
+    title = "Top 10 Most Populous Countries (2022)",
+    x = "Country",
+    y = "Population (2022)",
+    fill = "Continent"
+  ) +
+  theme_minimal() +
+  theme(plot.title = element_text(face = "bold", size = 14))
+
+ ## 4.4.2 Population Trend (1990–2022)
+
+year_columns <- c("x1990_population","x2000_population",
+                  "x2010_population","x2015_population",
+                  "x2020_population","x2022_population")
+
+
+pop_trend <- pop_raw %>%
+  filter(country_territory %in% top10_2022$country_territory) %>%
+  select(country_territory, continent, all_of(year_columns)) %>%
+  pivot_longer(cols = all_of(year_columns),
+               names_to = "year",
+               values_to = "population") %>%
+  mutate(year = as.numeric(str_extract(year, "\\d+")))
+
+
+ggplot(pop_trend, aes(x = year, y = population, color = country_territory)) +
+  geom_line(size = 1) +
+  scale_y_continuous(labels = scales::label_number(scale_cut = cut_short_scale())) +
+  labs(
+    title = "Population Trend (1990–2022) for Top 10 Most Populous Countries",
+    x = "Year",
+    y = "Population",
+    color = "Country"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(face = "bold", size = 14),
+    legend.position = "bottom"
+  )
+
+## 4.4.3 CO₂ Emission Trend (1990–2019)
+
+co2_years <- paste0("x", 1990:2018)
+
+co2_trend <- co2_raw %>%
+  filter(country_name %in% top10_2022$country_territory) %>%
+  select(country_name, all_of(co2_years)) %>%
+  pivot_longer(cols = all_of(co2_years),
+               names_to = "year",
+               values_to = "co2_emission") %>%
+  mutate(year = as.numeric(str_extract(year, "\\d+")))
+
+ggplot(co2_trend, aes(x = year, y = co2_emission, color = country_name)) +
+  geom_line(size = 1) +
+  labs(
+    title = "CO₂ Emission Trend (1990–2019) – Top 10 Most Populous Countries",
+    x = "Year",
+    y = "CO₂ Emission (metric tons per capita)",
+    color = "Country"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(face = "bold", size = 14),
+    legend.position = "bottom"
+  )
+
+## 4.5.1 Correlation in population columns
+
+pop_corr <- pop_raw %>%
+  select(area_km2,density_per_km2,growth_rate,world_population_percentage) %>%
+  mutate(across(everything(),as.numeric)) #ensure all are numeric
+
+# Computation of correlation matrix
+cor_matrix <- cor(pop_corr , use="complete.obs")
+
+#Display the correlation matrix
+cor_matrix
+
+library(ggcorrplot)
+
+ggcorrplot(cor_matrix,
+           hc.order =TRUE,
+           lab= TRUE,
+           lab_size= 3,
+           colors = c("red","white","blue"),
+           title ="Correlation Heatmap -Population Variables",
+           ggtheme = theme_minimal)
+
+
+## 4.5.2 Merge World Population and CO₂ Emission Data
+
+# Verify the duplicate columns 2019
+co2_raw %>%
+  select(country_name, x2019_34, x2019_35) %>%
+  head(10)
+
+# Fix duplicated 2019 columns
+co2_raw <- co2_raw %>%
+  mutate(x2019 = coalesce(x2019_34, x2019_35)) %>%  # keep whichever isn't NA
+  select(-x2019_34, -x2019_35)  # remove duplicates
+
+# Extract 2022 population and 2019 CO₂ emission
+pop_2022 <- pop_raw %>%
+  select(country_territory, x2022_population)
+
+co2_2019 <- co2_raw %>%
+  select(country_name, x2019) %>%
+  rename(co2_2019 = x2019)
+
+merged_data <- pop_2022 %>%
+  inner_join(co2_2019, by = c("country_territory" = "country_name"))
+
+head(merged_data)
+
+cor.test(merged_data$x2022_population, merged_data$co2_2019)
+
+ggplot(merged_data, aes(x = x2022_population, y = co2_2019)) +
+  geom_point(color = "steelblue", alpha = 0.7) +
+  geom_smooth(method = "lm", color = "red", se = TRUE) +
+  scale_x_continuous(labels = scales::label_number(scale_cut = cut_short_scale())) +
+  labs(
+    title = "Relationship between Population (2022) and CO₂ Emission (2019)",
+    x = "Population (2022)",
+    y = "CO₂ Emission (metric tons per capita)"
+  ) +
+  theme_minimal()
+
+
+## 4.6 Comparing CO₂ Emissions by Continent (2019)
+
+# Add continent information to the merged data
+merged_with_continent <- merged_data %>%
+  left_join(pop_raw %>% select(country_territory, continent),
+            by = "country_territory")
+
+# Sum 2019 CO₂ emissions by continent
+continent_co2_2019 <- merged_with_continent %>%
+  group_by(continent) %>%
+  summarise(total_co2_2019 = sum(co2_2019, na.rm = TRUE)) %>%
+  arrange(desc(total_co2_2019))
+
+# Bar chart of CO₂ emissions by continent
+ggplot(continent_co2_2019,
+       aes(x = reorder(continent, total_co2_2019),
+           y = total_co2_2019, fill = continent)) +
+  geom_col(width = 0.7) +
+  coord_flip() +
+  scale_y_continuous(labels = scales::label_number(scale_cut = cut_short_scale())) +
+  labs(title = "CO₂ Emissions by Continent (2019)",
+       x = "Continent",
+       y = "Total CO₂ Emission (metric tons per capita)") +
+  theme_minimal() +
+  theme(plot.title = element_text(face = "bold", size = 14),
+        legend.position = "none")
+
+# Identify continents with highest, third, and lowest emissions
+first_cont  <- continent_co2_2019 %>% slice_max(total_co2_2019, n = 1)
+third_cont  <- continent_co2_2019 %>% slice(3)
+last_cont   <- continent_co2_2019 %>% slice_tail(n = 1)
+
+# Print results
+cat("1) Highest 2019 CO₂-emitting continent:", first_cont$continent,
+    "=", signif(first_cont$total_co2_2019, 4), "metric tons per capita\n")
+
+cat("2) Third highest continent:", third_cont$continent,
+    "=", signif(third_cont$total_co2_2019, 4), "metric tons per capita\n")
+
+cat("3) Lowest 2019 CO₂-emitting continent:", last_cont$continent,
+    "=", signif(last_cont$total_co2_2019, 4), "metric tons per capita\n")
+
+```
